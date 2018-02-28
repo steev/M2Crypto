@@ -1011,17 +1011,18 @@ class Urllib2SSLClientTestCase(BaseSSLClientTestCase):
 
         m2urllib2.build_opener(ctx, m2urllib2.HTTPBasicAuthHandler())
 
-    def test_urllib2_leak(self):
+    def test_urllib2_no_sock_leak(self):
         pid = self.start_server(self.args)
         try:
             o = m2urllib2.build_opener()
             r = o.open('https://%s:%s/' % (srv_host, self.srv_port))
             s = [r.fp._sock.fp]
+            ssl_conn = s[0]._sock
+            self.assertFalse(ssl_conn._closed)
             r.close()
-            # TODO This should be assertEqual 1, but we leak sock
-            # somehwere. Not sure how to fix it.
+            self.assertTrue(ssl_conn._closed)
             log.debug('get_referrers = %d', len(gc.get_referrers(s[0])))
-            self.assertLessEqual(len(gc.get_referrers(s[0])), 2)
+            self.assertEqual(len(gc.get_referrers(s[0])), 1)
         finally:
             self.stop_server(pid)
 

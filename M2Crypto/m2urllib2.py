@@ -51,8 +51,52 @@ except NameError:
     AbstractHTTPHandler = urllib.request.AbstractHTTPHandler
 
 
+def _makefile(sock_like, mode, bufsize):
+    if six.PY2:
+        return socket._fileobject(sock_like, mode=mode, bufsize=bufsize,
+                                  close=True)
+    if not hasattr(sock_like, '_decref_socketios'):
+        def _decref_sios(self):
+            self.close()
+        sock_like._decref_socketios = _decref_sios.__get__(sock_like,
+                                                           type(sock_like))
+    return socket.SocketIO(sock_like, mode)
+
+
+class RefCountingSSLConnection(SSL.Connection):
+    """A reference counting SSL connection.
+
+    It can be wrapped into a socket._fileobject or socket.SocketIO instance.
+    If the wrapping object is closed or subject to garbage collection,
+    this SSL connection is only shut down if there are no more references,
+    which were created by RefCountingSSLConnection.makefile, to it.
+    """
+
+    def __init__(self, *args, **kwargs):
+        SSL.Connection.__init__(self, *args, **kwargs)
+        self._refs = 0
+        self._closed = False
+
+    def _decref_socketios(self):
+        if self._refs > 0:
+            self._refs -= 1
+        if self._refs == 0 and not self._closed:
+            # make sure we close the connection only once
+            # (otherwise we end up with a bidirectional shutdown)
+            self._closed = True
+            SSL.Connection.close(self)
+
+    def close(self):
+        self._decref_socketios()
+
+    def makefile(self, mode='rb', bufsize=-1):
+        self._refs += 1
+        return _makefile(self, mode, bufsize)
+
+
 class HTTPSHandler(AbstractHTTPHandler):
-    def __init__(self, ssl_context=None):
+    def __init__(self, ssl_context=None,
+                 ssl_conn_cls=RefCountingSSLConnection):
         # type: (SSL.Context) -> None
         AbstractHTTPHandler.__init__(self)
 
@@ -61,6 +105,7 @@ class HTTPSHandler(AbstractHTTPHandler):
             self.ctx = ssl_context
         else:
             self.ctx = SSL.Context()
+        self._ssl_conn_cls = ssl_conn_cls
 
     # Copied from urllib2, so we can set the ssl context.
     def https_open(self, req):
@@ -92,13 +137,15 @@ class HTTPSHandler(AbstractHTTPHandler):
 
         if target_host != host:
             request_uri = urldefrag(full_url)[0]
-            h = httpslib.ProxyHTTPSConnection(host=host, ssl_context=self.ctx)
+            h = httpslib.ProxyHTTPSConnection(host=host, ssl_context=self.ctx,
+                                              ssl_conn_cls=self._ssl_conn_cls)
         else:
             try:     # up to python-3.2
                 request_uri = req.get_selector()
             except AttributeError:  # from python-3.3
                 request_uri = req.selector
-            h = httpslib.HTTPSConnection(host=host, ssl_context=self.ctx)
+            h = httpslib.HTTPSConnection(host=host, ssl_context=self.ctx,
+                                         ssl_conn_cls=self._ssl_conn_cls)
         # End our change
         h.set_debuglevel(self._debuglevel)
 
@@ -125,14 +172,14 @@ class HTTPSHandler(AbstractHTTPHandler):
         # to read().  This weird wrapping allows the returned object to
         # have readline() and readlines() methods.
         r.recv = r.read
-        if six.PY2:
-            fp = socket._fileobject(r, close=True)
-        else:
-            r._decref_socketios = lambda: None
+        if six.PY3:
             r.ssl = h.sock.ssl
             r._timeout = -1.0
-            r.recv_into = r.readinto
-            fp = socket.SocketIO(r, 'rb')
+            # FIXME Meanwhile master has this:
+            # r.recv_into = r.readinto
+            # fp = socket.SocketIO(r, 'rb')
+            r.recv_into = lambda b: SSL.Connection.recv_into(r, b)
+        fp = _makefile(r, mode='rb', bufsize=-1)
 
         resp = addinfourl(fp, r.msg, req.get_full_url())
         resp.code = r.status

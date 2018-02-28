@@ -26,7 +26,8 @@ class HTTPSConnection(HTTPConnection):
 
     default_port = HTTPS_PORT
 
-    def __init__(self, host, port=None, strict=None, **ssl):
+    def __init__(self, host, port=None, strict=None,
+                 ssl_conn_cls=SSL.Connection, **ssl):
         # type: (str, Optional[int], Optional[bool], **Any) -> None
         """
         Represents one transaction with an HTTP server over the SSL
@@ -45,6 +46,7 @@ class HTTPSConnection(HTTPConnection):
         self.session = None  # type: bytes
         self.host = host
         self.port = port
+        self._ssl_conn_cls = ssl_conn_cls
         keys = set(ssl.keys()) - set(('key_file', 'cert_file', 'ssl_context'))
         if keys:
             raise ValueError('unknown keyword argument: %s', keys)
@@ -65,7 +67,7 @@ class HTTPSConnection(HTTPConnection):
                                    socket.SOCK_STREAM):
             sock = None
             try:
-                sock = SSL.Connection(self.ssl_ctx, family=family)
+                sock = self._ssl_conn_cls(self.ssl_ctx, family=family)
 
                 # set SNI server name since we know it at this point
                 sock.set_tlsext_host_name(self.host)
@@ -251,7 +253,7 @@ class ProxyHTTPSConnection(HTTPSConnection):
     def _start_ssl(self):
         # type: () -> None
         """ Make this connection's socket SSL-aware. """
-        self.sock = SSL.Connection(self.ssl_ctx, self.sock)
+        self.sock = self._ssl_conn_cls(self.ssl_ctx, self.sock)
         self.sock.setup_ssl()
         self.sock.set_connect_state()
         self.sock.connect_ssl()
