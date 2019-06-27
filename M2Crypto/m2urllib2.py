@@ -58,8 +58,9 @@ def _makefile(sock_like, mode, bufsize):
     if not hasattr(sock_like, '_decref_socketios'):
         def _decref_sios(self):
             self.close()
-        sock_like._decref_socketios = _decref_sios.__get__(sock_like,
-                                                           type(sock_like))
+        # sock_like._decref_socketios = _decref_sios.__get__(sock_like,
+        #                                                    type(sock_like))
+        sock_like._decref_socketios = lambda: sock_like.close()
     return socket.SocketIO(sock_like, mode)
 
 
@@ -84,7 +85,7 @@ class RefCountingSSLConnection(SSL.Connection):
             # make sure we close the connection only once
             # (otherwise we end up with a bidirectional shutdown)
             self._closed = True
-            SSL.Connection.close(self)
+            super(RefCountingSSLConnection, self).close()
 
     def close(self):
         self._decref_socketios()

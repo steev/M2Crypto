@@ -28,7 +28,7 @@ class HTTPSConnection(HTTPConnection):
 
     def __init__(self, host, port=None, strict=None,
                  ssl_conn_cls=SSL.Connection, **ssl):
-        # type: (str, Optional[int], Optional[bool], **Any) -> None
+        # type: (str, Optional[int], Optional[bool], SSL.Connection, **Any) -> None
         """
         Represents one transaction with an HTTP server over the SSL
         connection.
